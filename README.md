@@ -54,7 +54,7 @@ to run it locally).
 Requires only Docker Desktop / Docker Engine — everything else is pulled or
 built automatically, all from free images.
 
-```bash
+<!-- ```bash
 docker compose up --build
 ```
 
@@ -80,10 +80,10 @@ By default `rca-agent` tries to reach Ollama and, if it can't, automatically
 falls back to a deterministic rule-based explanation — so the platform works
 out of the box even without pulling a model. To enable the real LLM:
 ```bash
-docker compose exec ollama ollama pull llama3.2:1b
+docker compose exec ollama ollama pull llama3.2:1b -->
 ```
 
-## Running without Docker (for development)
+<!-- ## Running without Docker (for development)
 
 Each service is a plain FastAPI app. From the repo root:
 ```bash
@@ -104,7 +104,7 @@ For the dashboard:
 cd dashboard
 npm install
 npm run dev
-```
+``` -->
 
 ## Cost — this build is free-tier only
 
