@@ -1,0 +1,146 @@
+# ShadowAPM — full local stack. Every component here is free / open-source:
+#   - PostgreSQL + TimescaleDB extension (official free Docker image)
+#   - Python / FastAPI services (open source)
+#   - Scikit-learn Isolation Forest (open source, no GPU)
+#   - Ollama (free, local LLM runtime — no paid API key needed)
+#   - React dashboard (open source)
+#
+# Usage:
+#   docker compose up --build
+#   Dashboard:      http://localhost:5173
+#   Chaos Engine:   http://localhost:8003/docs
+#   Anomaly Det.:   http://localhost:8004/docs
+#   RCA Agent:      http://localhost:8005/docs
+#   Proxy (send traffic here, NOT to sample-api directly): http://localhost:8000
+
+services:
+  db:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shadowapm
+      POSTGRES_PASSWORD: shadowapm
+      POSTGRES_DB: shadowapm
+    ports:
+      - "5432:5432"
+    volumes:
+      - shadowapm_db_data:/var/lib/postgresql/data
+      - ./telemetry/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./scripts:/scripts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shadowapm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- Free, local LLM runtime for the RCA agent. Optional: if this
+  # service is unreachable, rca-agent automatically falls back to a
+  # # deterministic, evidence-based explanation (see rca-agent/app/main.py). ---
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   restart: unless-stopped
+  #   volumes:
+  #     - shadowapm_ollama_data:/root/.ollama
+  #   ports:
+  #     - "11434:11434"
+
+  sample-api:
+    build:
+      context: .
+      dockerfile: sample-api/Dockerfile
+    restart: unless-stopped
+    # No DB access — this represents the REAL production service.
+
+  sandbox-api:
+    build:
+      context: .
+      dockerfile: sandbox-api/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://shadowapm:shadowapm@db:5432/shadowapm
+    depends_on:
+      db:
+        condition: service_healthy
+
+  proxy:
+    build:
+      context: .
+      dockerfile: proxy/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://shadowapm:shadowapm@db:5432/shadowapm
+      PRODUCTION_URL: http://sample-api:8000
+      SANDBOX_URL: http://sandbox-api:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      sample-api:
+        condition: service_started
+      sandbox-api:
+        condition: service_started
+
+  chaos-engine:
+    build:
+      context: .
+      dockerfile: chaos-engine/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://shadowapm:shadowapm@db:5432/shadowapm
+    ports:
+      - "8003:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  anomaly-detector:
+    build:
+      context: .
+      dockerfile: anomaly-detector/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://shadowapm:shadowapm@db:5432/shadowapm
+    volumes:
+      - shadowapm_model_data:/data
+    ports:
+      - "8004:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  rca-agent:
+    build:
+      context: .
+      dockerfile: rca-agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://shadowapm:shadowapm@db:5432/shadowapm
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: llama3.2:1b
+    ports:
+      - "8005:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      VITE_CHAOS_ENGINE_URL: http://localhost:8003
+      VITE_ANOMALY_DETECTOR_URL: http://localhost:8004
+      VITE_RCA_AGENT_URL: http://localhost:8005
+    ports:
+      - "5173:5173"
+    depends_on:
+      - chaos-engine
+      - anomaly-detector
+      - rca-agent
+
+volumes:
+  shadowapm_db_data:
+  # shadowapm_ollama_data:
+  shadowapm_model_data:
